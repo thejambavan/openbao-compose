@@ -1,0 +1,173 @@
+---
+services:
+  certgen:
+    image: alpine:3.20
+    container_name: certgen
+    entrypoint: ["/bin/sh", "-c"]
+    command: /openbao/tls/gen-certs.sh
+    volumes:
+      - tls-certs:/openbao/tls
+      - ./tls-init/gen-certs.sh:/openbao/tls/gen-certs.sh:ro
+    networks:
+      - openbao-net
+  secrets01:
+    image: ghcr.io/openbao/openbao:latest
+    container_name: secrets01
+    hostname: secrets01
+    entrypoint: ["/usr/local/bin/docker-entrypoint.sh", "server"]
+      ## entrypoint: ["/openbao/tls/auto-init.sh secrets01"]
+      #entrypoint: ["/bin/sh", "-c"]
+      #command: |
+      #  exec /usr/local/bin/docker-entrypoint.sh server
+    environment:
+      BAO_LOCAL_CONFIG: |
+        {
+          "ui": true,
+          "listener": [{
+            "tcp": {
+              "address": "[::]:8200",
+              "tls_cert_file": "/openbao/tls/secrets01-fullchain.pem",
+              "tls_key_file": "/openbao/tls/secrets01-key.pem",
+              "tls_require_and_verify_client_cert": "false",
+              "tls_client_ca_file": "/openbao/tls/ca.pem"
+            }
+          }],
+          "storage": {
+            "raft": {
+              "path": "/openbao/file",
+              "node_id": "secrets01"
+            }
+          },
+          "cluster_name": "openbao-cluster",
+          "api_addr": "https://secrets01:8200",
+          "cluster_addr": "https://secrets01:8201"
+        }
+    volumes:
+      - secrets01-data:/openbao/file
+      - tls-certs:/openbao/tls
+      - ./tls-init/auto-init.sh:/openbao/tls/auto-init.sh:ro
+    ports:
+      - "8201:8200"
+    cap_add:
+      - IPC_LOCK
+    networks:
+      - openbao-net
+    depends_on:
+      - certgen
+
+  secrets02:
+    image: ghcr.io/openbao/openbao:latest
+    container_name: secrets02
+    hostname: secrets02
+    entrypoint: ["/usr/local/bin/docker-entrypoint.sh", "server"]
+    environment:
+      BAO_LOCAL_CONFIG: |
+        {
+          "ui": true,
+          "listener": [{
+            "tcp": {
+              "address": "[::]:8200",
+              "tls_cert_file": "/openbao/tls/secrets02-fullchain.pem",
+              "tls_key_file": "/openbao/tls/secrets02-key.pem",
+              "tls_require_and_verify_client_cert": "false",
+              "tls_client_ca_file": "/openbao/tls/ca.pem"
+            }
+          }],
+          "storage": {
+            "raft": {
+              "path": "/openbao/file",
+              "node_id": "secrets02",
+              "retry_join": [{
+                "leader_api_addr": "https://secrets01:8200",
+                "leader_ca_cert_file": "/openbao/tls/ca.pem"
+              }]
+            }
+          },
+          "cluster_name": "openbao-cluster",
+          "api_addr": "https://secrets02:8200",
+          "cluster_addr": "https://secrets02:8201"
+        }
+    volumes:
+      - secrets02-data:/openbao/file
+      - tls-certs:/openbao/tls
+      - ./tls-init/auto-init.sh:/openbao/tls/auto-init.sh:ro
+    ports:
+      - "8202:8200"
+    cap_add:
+      - IPC_LOCK
+    networks:
+      - openbao-net
+    depends_on:
+      - certgen
+
+  secrets03:
+    image: ghcr.io/openbao/openbao:latest
+    container_name: secrets03
+    hostname: secrets03
+    entrypoint: ["/usr/local/bin/docker-entrypoint.sh", "server"]
+    environment:
+      BAO_LOCAL_CONFIG: |
+        {
+          "ui": true,
+          "listener": [{
+            "tcp": {
+              "address": "[::]:8200",
+              "tls_cert_file": "/openbao/tls/secrets03-fullchain.pem",
+              "tls_key_file": "/openbao/tls/secrets03-key.pem",
+              "tls_require_and_verify_client_cert": "false",
+              "tls_client_ca_file": "/openbao/tls/ca.pem"
+            }
+          }],
+          "storage": {
+            "raft": {
+              "path": "/openbao/file",
+              "node_id": "secrets03",
+              "retry_join": [{
+                "leader_api_addr": "https://secrets01:8200",
+                "leader_ca_cert_file": "/openbao/tls/ca.pem"
+              }]
+            }
+          },
+          "cluster_name": "openbao-cluster",
+          "api_addr": "https://secrets03:8200",
+          "cluster_addr": "https://secrets03:8201"
+        }
+    volumes:
+      - secrets03-data:/openbao/file
+      - tls-certs:/openbao/tls
+      - ./tls-init/auto-init.sh:/openbao/tls/auto-init.sh:ro
+    ports:
+      - "8203:8200"
+    cap_add:
+      - IPC_LOCK
+    networks:
+      - openbao-net
+    depends_on:
+      - certgen
+
+  haproxy:
+    image: haproxytech/haproxy-alpine:latest
+    container_name: openbao-haproxy
+    depends_on:
+      - certgen
+      - secrets01
+      - secrets02
+      - secrets03
+    volumes:
+      - ./haproxy/haproxy-openbao.cfg:/etc/haproxy/haproxy.cfg:ro
+      - tls-certs:/etc/haproxy/certs:ro
+    ports:
+      - "8200:8200"  # TLS frontend
+    networks:
+      - openbao-net
+
+volumes:
+  secrets01-data:
+  secrets02-data:
+  secrets03-data:
+  tls-certs:
+
+networks:
+  openbao-net:
+    driver: bridge
+
